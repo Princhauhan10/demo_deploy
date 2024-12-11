@@ -1,24 +1,22 @@
-name: Deploy to Amazon ECS
+name: Direct ECS Deployment without Task Definition
 
 on:
   push:
     branches: [ "main" ]
 
 env:
-  AWS_REGION: us-west-1                   # set this to your preferred AWS region
-  ECR_REPOSITORY: demo_deploy     # set this to your ECR repository name
-  ECS_SERVICE: demo_deploy           # set this to your ECS service name
-  ECS_CLUSTER: demo_deploy           # set this to your ECS cluster name
-  CONTAINER_NAME: demo_deploy     # set this to the name of your container in the task definition
+  AWS_REGION: us-west-1                   # Set your AWS region
+  ECR_REPOSITORY: demo_deploy     # Your ECR repository name
+  ECS_CLUSTER: demo_deploy           # Your ECS cluster name
+  ECS_SERVICE: demo_deploy           # Your ECS service name
+  CONTAINER_NAME: demo_deploy     # Container name in the service
 
 jobs:
   deploy:
-    name: Deploy
     runs-on: ubuntu-latest
-    environment: production
-
+    
     steps:
-    - name: Checkout
+    - name: Checkout code
       uses: actions/checkout@v4
 
     - name: Configure AWS credentials
@@ -32,23 +30,32 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v2
 
-    - name: Build, tag, and push image to Amazon ECR
+    - name: Build and push Docker image
       id: build-image
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
       run: |
-        # Build a docker container and
-        # push it to ECR so that it can
-        # be deployed to ECS.
+        # Build Docker image
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        
+        # Output the full image URI for ECS update
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-    - name: Deploy Amazon ECS task definition
-      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-      with:
-        task-definition: task-definition.json
-        service: ${{ env.ECS_SERVICE }}
-        cluster: ${{ env.ECS_CLUSTER }}
-        wait-for-service-stability: true
+    - name: Update ECS Service
+      run: |
+        # Update ECS service with new image directly
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service ${{ env.ECS_SERVICE }} \
+          --force-new-deployment \
+          --region ${{ env.AWS_REGION }}
+
+    - name: Wait for Deployment Stability
+      run: |
+        # Wait for the service to stabilize
+        aws ecs wait services-stable \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --services ${{ env.ECS_SERVICE }} \
+          --region ${{ env.AWS_REGION }}
